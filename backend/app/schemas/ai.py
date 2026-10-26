@@ -87,3 +87,23 @@ class AIVisionResponse(BaseModel):
         description="Verbatim text extracted from signs, notices, or plaques without speculation.",
     )
 
+
+class AIQueryRequest(BaseModel):
+    """Schema for natural-language campus or general queries."""
+
+    question: str = Field(..., min_length=1, max_length=1000, description="User's spoken or typed question")
+    context: Optional[str] = Field(
+        default="You are Saarthi, an accessible voice assistant for Chandigarh University students. Provide concise, helpful 1 to 2 sentence answers.",
+        description="System prompt instruction or context for the answer",
+    )
+
+
+class AIQueryResponse(BaseModel):
+    """Schema for AI query response."""
+
+    status: str
+    model: str
+    question: str
+    answer: str
+    confidence: float = 0.90
+

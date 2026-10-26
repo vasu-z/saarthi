@@ -390,4 +390,111 @@ export async function analyzeSceneAssist(
   }
 }
 
+export interface SpeechStatusResponse {
+  configured: boolean;
+  voice_id: string;
+  model_id: string;
+}
+
+/**
+ * Checks whether backend ElevenLabs TTS is configured.
+ */
+export async function getSpeechStatus(): Promise<SpeechStatusResponse> {
+  const baseUrl = getBackendBaseUrl();
+  const url = `${baseUrl}/api/v1/speech/status`;
+  try {
+    const res = await fetchWithTimeout(url, { method: "GET" }, 5000);
+    if (!res.ok) {
+      return { configured: false, voice_id: "", model_id: "" };
+    }
+    return await res.json();
+  } catch {
+    return { configured: false, voice_id: "", model_id: "" };
+  }
+}
+
+/**
+ * Synthesizes natural speech using backend ElevenLabs route.
+ * Returns Base64 MP3 audio data or explicit error.
+ */
+export async function synthesizeSpeechAudio(
+  text: string,
+  voiceId?: string,
+  signal?: AbortSignal
+): Promise<{ ok: boolean; audioBase64?: string; error?: string }> {
+  const baseUrl = getBackendBaseUrl();
+  const url = `${baseUrl}/api/v1/speech/synthesize`;
+  try {
+    const res = await fetchWithTimeout(
+      url,
+      {
+        method: "POST",
+        body: JSON.stringify({ text, voice_id: voiceId }),
+      },
+      15000,
+      signal
+    );
+
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      return { ok: false, error: errData.detail || `HTTP ${res.status}` };
+    }
+
+    const blob = await res.blob();
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const resultStr = reader.result as string;
+        const base64data = resultStr?.includes(",") ? resultStr.split(",")[1] : resultStr;
+        resolve({ ok: true, audioBase64: base64data });
+      };
+      reader.onerror = () => {
+        resolve({ ok: false, error: "Failed to read audio blob." });
+      };
+      reader.readAsDataURL(blob);
+    });
+  } catch (err: any) {
+    if (err.name === "AbortError") {
+      throw err;
+    }
+    return { ok: false, error: err.message || "Network error synthesizing speech." };
+  }
+}
+
+export interface GeneralQueryResponse {
+  status: string;
+  model: string;
+  question: string;
+  answer: string;
+  confidence: number;
+}
+
+/**
+ * Ask a general natural-language question to the backend AI model.
+ */
+export async function askGeneralQuery(
+  question: string,
+  signal?: AbortSignal
+): Promise<GeneralQueryResponse> {
+  const baseUrl = getBackendBaseUrl();
+  const url = `${baseUrl}/api/v1/ai/query`;
+
+  const res = await fetchWithTimeout(
+    url,
+    {
+      method: "POST",
+      body: JSON.stringify({ question }),
+    },
+    15000,
+    signal
+  );
+
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data?.detail || `HTTP ${res.status}`);
+  }
+
+  return data as GeneralQueryResponse;
+}
+
 

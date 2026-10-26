@@ -18,6 +18,9 @@ jest.mock(
     let appStateListener: ((state: string) => void) | null = null;
     return {
       Platform: { OS: "android" },
+      AccessibilityInfo: {
+        announceForAccessibility: jest.fn(),
+      },
       AppState: {
         currentState: "active",
         addEventListener: jest.fn((event: string, handler: (state: string) => void) => {
@@ -44,9 +47,10 @@ import { speechService } from "./speech";
 import { voiceRecognitionService } from "./voiceRecognition";
 import { AppState } from "react-native";
 
-describe("globalVoiceService — Global Voice Navigation System", () => {
+describe("globalVoiceService — Voice Session State Machine (Rule 2)", () => {
   const advanceAndFlush = async (ms: number) => {
     jest.advanceTimersByTime(ms);
+    await Promise.resolve();
     await Promise.resolve();
     await Promise.resolve();
   };
@@ -55,7 +59,6 @@ describe("globalVoiceService — Global Voice Navigation System", () => {
     jest.restoreAllMocks();
     jest.useFakeTimers();
 
-    // Default mocks: onDone called synchronously so speech completion triggers scheduled restart
     jest.spyOn(speechService, "speak").mockImplementation(async (text, opts) => {
       opts?.onDone?.();
     });
@@ -69,267 +72,90 @@ describe("globalVoiceService — Global Voice Navigation System", () => {
     jest.spyOn(voiceRecognitionService, "stopListening").mockImplementation(() => {});
     jest.spyOn(voiceRecognitionService, "cancelListening").mockImplementation(() => {});
 
-    await globalVoiceService.disableVoiceMode(false);
+    await globalVoiceService.stopAll();
+    globalVoiceService.setHandsFreeMode(false);
   });
 
   afterEach(async () => {
     jest.clearAllTimers();
     jest.useRealTimers();
-    await globalVoiceService.disableVoiceMode(false);
+    await globalVoiceService.stopAll();
+    globalVoiceService.setHandsFreeMode(false);
   });
 
-  // 1. Activation and Deactivation
-  describe("Activation and Deactivation", () => {
-    it("activates voice mode, speaks greeting, and starts listening only after greeting finishes", async () => {
-      const speakSpy = jest.spyOn(speechService, "speak");
+  describe("Push-to-Talk Lifecycle & Zero Unsolicited Speech", () => {
+    it("starts in IDLE state with no unsolicited speech", () => {
+      const state = globalVoiceService.getState();
+      expect(state.sessionState).toBe("IDLE");
+      expect(state.isActive).toBe(false);
+      expect(state.isListening).toBe(false);
+      expect(state.isSpeaking).toBe(false);
+      expect(state.statusMessage).toBe("Ready");
+      expect(speechService.speak).not.toHaveBeenCalled();
+    });
+
+    it("starts voice session on user push-to-talk without speaking unprompted greeting", async () => {
       const listenSpy = jest.spyOn(voiceRecognitionService, "startListening");
+      const speakSpy = jest.spyOn(speechService, "speak");
 
-      // Before speech completes, listenSpy shouldn't have been called
-      const successPromise = globalVoiceService.enableVoiceMode();
-      expect(listenSpy).not.toHaveBeenCalled();
-
-      const success = await successPromise;
-      expect(success).toBe(true);
+      const started = await globalVoiceService.startVoiceSession();
+      expect(started).toBe(true);
 
       const state = globalVoiceService.getState();
-      expect(state.isActive).toBe(true);
-      expect(state.isPaused).toBe(false);
-      expect(state.statusMessage).toContain("Voice mode is on");
+      expect(state.sessionState).toBe("LISTENING");
+      expect(state.isListening).toBe(true);
+      expect(state.statusMessage).toBe("Listening...");
 
-      // Verify spoken confirmation was triggered
-      expect(speakSpy).toHaveBeenCalledWith(
-        expect.stringContaining("Voice mode is on"),
-        expect.objectContaining({ force: true })
-      );
-
-      // Fast-forward through TTS cooldown delay (300ms)
-      await advanceAndFlush(400);
-
+      // Verified: Zero unsolicited spoken greeting on activation!
+      expect(speakSpy).not.toHaveBeenCalled();
       expect(listenSpy).toHaveBeenCalledTimes(1);
     });
 
-    it("disables voice mode, stops microphone, and speaks confirmation", async () => {
-      await globalVoiceService.enableVoiceMode();
-      await advanceAndFlush(400);
+    it("toggles off from LISTENING back to IDLE when tapped again", async () => {
+      await globalVoiceService.startVoiceSession();
+      expect(globalVoiceService.getState().isListening).toBe(true);
 
-      const cancelListenSpy = jest.spyOn(voiceRecognitionService, "cancelListening");
-      const speakSpy = jest.spyOn(speechService, "speak");
-
-      await globalVoiceService.disableVoiceMode(true);
+      const toggled = await globalVoiceService.toggleVoiceMode();
+      expect(toggled).toBe(false);
 
       const state = globalVoiceService.getState();
-      expect(state.isActive).toBe(false);
+      expect(state.sessionState).toBe("IDLE");
       expect(state.isListening).toBe(false);
-      expect(state.statusMessage).toBe("Voice mode is off.");
-
-      expect(cancelListenSpy).toHaveBeenCalled();
-      expect(speakSpy).toHaveBeenCalledWith("Voice mode is off.", expect.objectContaining({ force: true }));
+      expect(state.statusMessage).toBe("Ready");
     });
 
-    it("toggles voice mode between active and inactive", async () => {
-      expect(globalVoiceService.getState().isActive).toBe(false);
-
-      await globalVoiceService.toggleVoiceMode();
-      expect(globalVoiceService.getState().isActive).toBe(true);
-
-      await globalVoiceService.toggleVoiceMode();
-      expect(globalVoiceService.getState().isActive).toBe(false);
-    });
-  });
-
-  // 2. Permission Handling
-  describe("Permission Handling", () => {
-    it("handles permission denial accessibly without starting microphone", async () => {
+    it("handles permission denial gracefully without unsolicited speech", async () => {
       jest.spyOn(voiceRecognitionService, "requestPermissions").mockResolvedValue(false);
       const speakSpy = jest.spyOn(speechService, "speak");
-      const listenSpy = jest.spyOn(voiceRecognitionService, "startListening");
 
-      const success = await globalVoiceService.enableVoiceMode();
+      const success = await globalVoiceService.startVoiceSession();
       expect(success).toBe(false);
 
       const state = globalVoiceService.getState();
-      expect(state.isActive).toBe(false);
-      expect(state.error).toContain("permission was denied");
-      expect(speakSpy).toHaveBeenCalledWith(expect.stringContaining("permission was denied"), {
-        force: true,
-      });
-      expect(listenSpy).not.toHaveBeenCalled();
+      expect(state.sessionState).toBe("IDLE");
+      expect(state.error?.toLowerCase()).toContain("permission was denied");
+      expect(speakSpy).not.toHaveBeenCalled();
     });
 
-    it("handles native module unavailability gracefully (Expo Go fallback)", async () => {
+    it("handles native speech engine unavailability gracefully", async () => {
       jest.spyOn(voiceRecognitionService, "checkAvailability").mockReturnValue({
         available: false,
         reason: "Speech recognition requires a native Android build.",
       });
       const speakSpy = jest.spyOn(speechService, "speak");
-      const listenSpy = jest.spyOn(voiceRecognitionService, "startListening");
 
-      const success = await globalVoiceService.enableVoiceMode();
+      const success = await globalVoiceService.startVoiceSession();
       expect(success).toBe(false);
 
-      expect(globalVoiceService.getState().isActive).toBe(false);
-      expect(speakSpy).toHaveBeenCalledWith(
-        expect.stringContaining("requires a native Android build"),
-        { force: true }
-      );
-      expect(listenSpy).not.toHaveBeenCalled();
+      const state = globalVoiceService.getState();
+      expect(state.sessionState).toBe("IDLE");
+      expect(state.error).toContain("Speech recognition requires a native Android build");
+      expect(speakSpy).not.toHaveBeenCalled();
     });
   });
 
-  // 3. Pause and Resume Listening
-  // 3. Pause and Resume Listening
-  describe("Pause and Resume Listening", () => {
-    it("pauses listening, stops mic, and notifies user without exiting voice mode", async () => {
-      await globalVoiceService.enableVoiceMode();
-      await advanceAndFlush(400);
-
-      const cancelListenSpy = jest.spyOn(voiceRecognitionService, "cancelListening");
-      const speakSpy = jest.spyOn(speechService, "speak");
-
-      await globalVoiceService.pauseListening(true);
-
-      const state = globalVoiceService.getState();
-      expect(state.isActive).toBe(true);
-      expect(state.isPaused).toBe(true);
-      expect(state.isListening).toBe(false);
-      expect(cancelListenSpy).toHaveBeenCalled();
-      expect(speakSpy).toHaveBeenCalledWith(
-        expect.stringContaining("Listening paused"),
-        expect.objectContaining({ force: true })
-      );
-    });
-
-    it("resumes listening from paused state after speech confirmation finishes (Active -> pause -> resume -> listening again)", async () => {
-      const listenSpy = jest.spyOn(voiceRecognitionService, "startListening").mockImplementation(async (cbs) => {
-        cbs?.onStart?.();
-      });
-
-      await globalVoiceService.enableVoiceMode();
-      await advanceAndFlush(400);
-      expect(listenSpy).toHaveBeenCalledTimes(1);
-      expect(globalVoiceService.getState().isListening).toBe(true);
-
-      await globalVoiceService.pauseListening(false);
-      expect(globalVoiceService.getState().isPaused).toBe(true);
-      expect(globalVoiceService.getState().isListening).toBe(false);
-
-      await globalVoiceService.resumeListening(true);
-      const state = globalVoiceService.getState();
-      expect(state.isPaused).toBe(false);
-
-      await advanceAndFlush(400);
-      expect(listenSpy).toHaveBeenCalledTimes(2);
-      expect(globalVoiceService.getState().isListening).toBe(true);
-    });
-
-    it("handles Active -> pause -> tap control -> listening again", async () => {
-      const listenSpy = jest.spyOn(voiceRecognitionService, "startListening").mockImplementation(async (cbs) => {
-        cbs?.onStart?.();
-      });
-
-      // 1. Start active
-      await globalVoiceService.enableVoiceMode();
-      await advanceAndFlush(400);
-      expect(listenSpy).toHaveBeenCalledTimes(1);
-
-      // 2. Pause
-      await globalVoiceService.pauseListening(true);
-      expect(globalVoiceService.getState().isPaused).toBe(true);
-      expect(globalVoiceService.getState().isListening).toBe(false);
-
-      // 3. Simulate tapping the global voice control while paused
-      const currentState = globalVoiceService.getState();
-      if (currentState.isPaused || !currentState.isListening) {
-        await globalVoiceService.resumeListening(true);
-      }
-      await advanceAndFlush(400);
-
-      expect(globalVoiceService.getState().isPaused).toBe(false);
-      expect(globalVoiceService.getState().isListening).toBe(true);
-      expect(listenSpy).toHaveBeenCalledTimes(2);
-    });
-
-    it("does not create duplicate recognition sessions during repeated pause and resume", async () => {
-      const listenSpy = jest.spyOn(voiceRecognitionService, "startListening").mockImplementation(async (cbs) => {
-        cbs?.onStart?.();
-      });
-
-      await globalVoiceService.enableVoiceMode();
-      await advanceAndFlush(400);
-      expect(listenSpy).toHaveBeenCalledTimes(1);
-
-      // Repeated pause and resume cycles
-      for (let i = 0; i < 5; i++) {
-        await globalVoiceService.pauseListening(false);
-        expect(globalVoiceService.getState().isPaused).toBe(true);
-        expect(globalVoiceService.getState().isListening).toBe(false);
-
-        await globalVoiceService.resumeListening(false);
-        await advanceAndFlush(200);
-        expect(globalVoiceService.getState().isPaused).toBe(false);
-        expect(globalVoiceService.getState().isListening).toBe(true);
-      }
-
-      // Exactly 1 initial + 5 resumes = 6 clean sessions
-      expect(listenSpy).toHaveBeenCalledTimes(6);
-    });
-
-    it("is safe to call resume while already listening without creating duplicate sessions", async () => {
-      const listenSpy = jest.spyOn(voiceRecognitionService, "startListening").mockImplementation(async (cbs) => {
-        cbs?.onStart?.();
-      });
-
-      await globalVoiceService.enableVoiceMode();
-      await advanceAndFlush(400);
-      expect(listenSpy).toHaveBeenCalledTimes(1);
-      expect(globalVoiceService.getState().isListening).toBe(true);
-
-      // Call resume while already active and listening
-      await globalVoiceService.resumeListening(true);
-      await advanceAndFlush(400);
-
-      // Should be a safe no-op and NOT start duplicate sessions
-      expect(listenSpy).toHaveBeenCalledTimes(1);
-      expect(globalVoiceService.getState().isActive).toBe(true);
-      expect(globalVoiceService.getState().isListening).toBe(true);
-    });
-
-    it("leaves a recoverable state if recognition restart fails and allows retry by tapping control", async () => {
-      // Mock startListening to reject on first attempt
-      const startSpy = jest
-        .spyOn(voiceRecognitionService, "startListening")
-        .mockRejectedValueOnce(new Error("Audio hardware busy"));
-
-      await globalVoiceService.enableVoiceMode();
-      await advanceAndFlush(400);
-
-      // Failed start leaves isPaused = true with informative error message
-      const failedState = globalVoiceService.getState();
-      expect(failedState.isPaused).toBe(true);
-      expect(failedState.isListening).toBe(false);
-      expect(failedState.error).toContain("Audio hardware busy");
-      expect(failedState.statusMessage).toContain("Tap to retry");
-
-      // User retries by tapping the control (resumeListening)
-      // Now startListening succeeds
-      startSpy.mockImplementation(async (cbs) => {
-        cbs?.onStart?.();
-      });
-
-      await globalVoiceService.resumeListening(true);
-      await advanceAndFlush(400);
-
-      // Successfully recovered!
-      const recoveredState = globalVoiceService.getState();
-      expect(recoveredState.isPaused).toBe(false);
-      expect(recoveredState.isListening).toBe(true);
-      expect(recoveredState.error).toBeNull();
-    });
-  });
-
-  // 4. Command Dispatch and Global Navigation
-  describe("Command Dispatch and Global Navigation", () => {
-    it("dispatches recognized command across screens and restarts listening after result speech", async () => {
+  describe("State Machine: IDLE -> LISTENING -> PROCESSING -> SPEAKING -> IDLE", () => {
+    it("completes full command lifecycle and returns to IDLE without looping", async () => {
       const onNavigateScreen = jest.fn();
       globalVoiceService.setDispatchContextProvider(() => ({
         currentScreen: "home",
@@ -341,386 +167,181 @@ describe("globalVoiceService — Global Voice Navigation System", () => {
         capturedCallbacks = cbs;
       });
 
-      await globalVoiceService.enableVoiceMode();
-      await advanceAndFlush(400);
+      const speakSpy = jest.spyOn(speechService, "speak");
 
+      await globalVoiceService.startVoiceSession();
       expect(capturedCallbacks).toBeTruthy();
 
-      // Simulate spoken command: "open timetable"
+      // Trigger final transcript
       capturedCallbacks.onResult({
-        transcript: "open time table",
+        transcript: "open timetable",
         isFinal: true,
       });
 
       await advanceAndFlush(100);
 
-      // Verification: Navigation occurred to timetable
+      // Verify navigation occurred
       expect(onNavigateScreen).toHaveBeenCalledWith("timetable");
+
+      // Verify exactly ONE spoken response
+      expect(speakSpy).toHaveBeenCalledTimes(1);
+      expect(speakSpy).toHaveBeenCalledWith(
+        expect.stringMatching(/timetable/i),
+        expect.objectContaining({ force: true })
+      );
+
+      // Verify it cleanly transitions to IDLE (no auto-restart loop)
+      const finalState = globalVoiceService.getState();
+      expect(finalState.sessionState).toBe("IDLE");
+      expect(finalState.isListening).toBe(false);
+      expect(finalState.statusMessage).toBe("Ready");
+    });
+
+    it("prevents duplicate submissions for duplicate results", async () => {
+      let capturedCallbacks: any = null;
+      jest.spyOn(voiceRecognitionService, "startListening").mockImplementation(async (cbs) => {
+        capturedCallbacks = cbs;
+      });
+      const speakSpy = jest.spyOn(speechService, "speak");
+
+      await globalVoiceService.startVoiceSession();
+
+      // First final transcript
+      capturedCallbacks.onResult({
+        transcript: "what time is my next class",
+        isFinal: true,
+      });
+
+      // Rapid secondary final transcript (simulated race)
+      capturedCallbacks.onResult({
+        transcript: "what time is my next class",
+        isFinal: true,
+      });
+
+      await advanceAndFlush(100);
+
+      // Exactly ONE response spoken
+      expect(speakSpy).toHaveBeenCalledTimes(1);
     });
   });
 
-  // 5. App Backgrounding and Error Threshold
-  describe("Lifecycle and Resilience", () => {
-    it("stops listening when app goes to background and resumes when returning to foreground", async () => {
-      await globalVoiceService.enableVoiceMode();
-      await advanceAndFlush(400);
+  describe("STOP ALL & Cancellation (Rule 2)", () => {
+    it("stopAll immediately cancels listening, stops playback, and resets to IDLE", async () => {
+      const stopListenSpy = jest.spyOn(voiceRecognitionService, "stopListening");
+      const stopSpeechSpy = jest.spyOn(speechService, "stop");
 
+      await globalVoiceService.startVoiceSession();
+      expect(globalVoiceService.getState().isListening).toBe(true);
+
+      await globalVoiceService.stopAll();
+
+      expect(stopListenSpy).toHaveBeenCalled();
+      expect(stopSpeechSpy).toHaveBeenCalled();
+      const state = globalVoiceService.getState();
+      expect(state.sessionState).toBe("IDLE");
+      expect(state.isListening).toBe(false);
+      expect(state.statusMessage).toBe("Ready");
+    });
+
+    it("ignores stale asynchronous responses after session cancellation", async () => {
+      let capturedCallbacks: any = null;
+      jest.spyOn(voiceRecognitionService, "startListening").mockImplementation(async (cbs) => {
+        capturedCallbacks = cbs;
+      });
+
+      // Setup an asynchronous dispatch context that simulates pending async work
+      globalVoiceService.setDispatchContextProvider(() => ({
+        currentScreen: "reader",
+        onTriggerScan: () => new Promise((resolve) => setTimeout(resolve, 200)),
+      }));
+
+      const speakSpy = jest.spyOn(speechService, "speak");
+
+      await globalVoiceService.startVoiceSession();
+
+      // Trigger dispatch that does async work
+      capturedCallbacks.onResult({
+        transcript: "scan now",
+        isFinal: true,
+      });
+
+      // User hits STOP ALL while command is still processing asynchronously
+      await globalVoiceService.stopAll();
+
+      // Advance timers to let the async work settle
+      await advanceAndFlush(500);
+
+      // Stale response must NOT be spoken!
+      expect(speakSpy).not.toHaveBeenCalled();
+      expect(globalVoiceService.getState().sessionState).toBe("IDLE");
+    });
+
+    it("stops everything when app goes to background without auto-resuming", async () => {
       const stopListenSpy = jest.spyOn(voiceRecognitionService, "stopListening");
       const listenSpy = jest.spyOn(voiceRecognitionService, "startListening");
 
-      // Simulate AppState going to background
+      await globalVoiceService.startVoiceSession();
+      expect(globalVoiceService.getState().isListening).toBe(true);
+
+      // App backgrounded
       (AppState as any)._simulateStateChange("background");
+      await advanceAndFlush(50);
 
       expect(stopListenSpy).toHaveBeenCalled();
+      expect(globalVoiceService.getState().sessionState).toBe("IDLE");
 
-      // Simulate AppState returning to active
+      // App foregrounded: must NOT spontaneously start listening
       (AppState as any)._simulateStateChange("active");
-      await advanceAndFlush(600);
+      await advanceAndFlush(500);
 
-      expect(listenSpy).toHaveBeenCalled();
-    });
-
-    it("pauses listening after 3 consecutive recognition errors to prevent infinite loops", async () => {
-      let capturedCallbacks: any = null;
-      jest.spyOn(voiceRecognitionService, "startListening").mockImplementation(async (cbs) => {
-        capturedCallbacks = cbs;
-      });
-
-      await globalVoiceService.enableVoiceMode();
-      await advanceAndFlush(400);
-
-      expect(capturedCallbacks).toBeTruthy();
-
-      // Trigger error 1
-      capturedCallbacks.onError("Network timeout");
-      await advanceAndFlush(700);
-
-      // Trigger error 2
-      capturedCallbacks.onError("No speech match");
-      await advanceAndFlush(700);
-
-      // Trigger error 3
-      capturedCallbacks.onError("Audio buffer error");
-      await advanceAndFlush(100);
-
-      const state = globalVoiceService.getState();
-      expect(state.isPaused).toBe(true);
-      expect(state.statusMessage).toBe("Voice recognition paused.");
-    });
-
-    it("prevents duplicate listeners through subscription cleanup", () => {
-      const listener = jest.fn();
-      const unsubscribe = globalVoiceService.subscribe(listener);
-
-      expect(listener).toHaveBeenCalledTimes(1);
-
-      unsubscribe();
-      globalVoiceService.pauseListening(false);
-
-      expect(listener).toHaveBeenCalledTimes(1);
+      // Listening is NOT spontaneously restarted
+      expect(listenSpy).toHaveBeenCalledTimes(1); // Only the initial one
+      expect(globalVoiceService.getState().sessionState).toBe("IDLE");
     });
   });
 
-  // 6. State Consistency Regression Suite
-  describe("State Consistency Regression Suite", () => {
-    it("Activation -> TTS completion -> listening: maintains isPaused=false throughout and enters listening only after speech", async () => {
-      let completeSpeech: (() => void) | null = null;
-      jest.spyOn(speechService, "speak").mockImplementation(async (text, opts) => {
-        completeSpeech = () => opts?.onDone?.();
-      });
-
-      const recordedStates: Array<{ isActive: boolean; isPaused: boolean; isListening: boolean }> = [];
-      const unsubscribe = globalVoiceService.subscribe((state) => {
-        recordedStates.push({
-          isActive: state.isActive,
-          isPaused: state.isPaused,
-          isListening: state.isListening,
-        });
-      });
+  describe("Hands-Free Mode (Explicit Opt-In)", () => {
+    it("restarts listening after speech finishes ONLY when handsFreeMode is explicitly enabled", async () => {
+      globalVoiceService.setHandsFreeMode(true);
 
       let capturedCallbacks: any = null;
+      let listenCount = 0;
       jest.spyOn(voiceRecognitionService, "startListening").mockImplementation(async (cbs) => {
         capturedCallbacks = cbs;
-        cbs?.onStart?.();
+        listenCount++;
       });
 
-      // 1. Activate Global Voice Mode
-      const enablePromise = globalVoiceService.enableVoiceMode();
-      await advanceAndFlush(50);
+      await globalVoiceService.startVoiceSession();
+      expect(listenCount).toBe(1);
 
-      // Verify state during welcome speech: active, NOT paused, NOT listening yet
-      const midSpeechState = globalVoiceService.getState();
-      expect(midSpeechState.isActive).toBe(true);
-      expect(midSpeechState.isPaused).toBe(false);
-      expect(midSpeechState.isListening).toBe(false);
-
-      // At no point during initial speech should isPaused be true!
-      expect(recordedStates.some((s) => s.isPaused === true)).toBe(false);
-
-      // 2. Complete welcome speech
-      expect(completeSpeech).toBeTruthy();
-      completeSpeech!();
-      await enablePromise;
-
-      // Fast-forward cooldown (300ms)
-      await advanceAndFlush(400);
-
-      // Verify state after speech: active, NOT paused, AND listening
-      const listeningState = globalVoiceService.getState();
-      expect(listeningState.isActive).toBe(true);
-      expect(listeningState.isPaused).toBe(false);
-      expect(listeningState.isListening).toBe(true);
-
-      unsubscribe();
-    });
-
-    it("Command -> navigation -> listening again: resets listening during dispatch and restarts after feedback speech", async () => {
-      const onNavigateScreen = jest.fn();
-      globalVoiceService.setDispatchContextProvider(() => ({
-        currentScreen: "home",
-        onNavigateToScreen: onNavigateScreen,
-      }));
-
-      let capturedCallbacks: any = null;
-      let startListeningCallCount = 0;
-      jest.spyOn(voiceRecognitionService, "startListening").mockImplementation(async (cbs) => {
-        capturedCallbacks = cbs;
-        startListeningCallCount++;
-        cbs?.onStart?.();
-      });
-
-      // Activate and reach listening state
-      await globalVoiceService.enableVoiceMode();
-      await advanceAndFlush(400);
-      expect(globalVoiceService.getState().isListening).toBe(true);
-      expect(startListeningCallCount).toBe(1);
-
-      // Setup speech simulation for command response
-      let isTtsSpeaking = false;
-      jest.spyOn(speechService, "isSpeaking").mockImplementation(() => isTtsSpeaking);
-      jest.spyOn(speechService, "isSpeakingAsync").mockImplementation(async () => isTtsSpeaking);
-      jest.spyOn(speechService, "speak").mockImplementation(async (text, opts) => {
-        isTtsSpeaking = true;
-        // Delay speech finish slightly
-        setTimeout(() => {
-          isTtsSpeaking = false;
-          opts?.onDone?.();
-        }, 100);
-      });
-
-      // Simulate spoken command "open reader"
+      // Process command
       capturedCallbacks.onResult({
         transcript: "open reader",
         isFinal: true,
       });
 
-      // Immediately after final result, listening should be false (preventing dual mic/TTS)
-      expect(globalVoiceService.getState().isListening).toBe(false);
+      await advanceAndFlush(200);
 
-      // Fast forward past dispatch and TTS duration
-      await advanceAndFlush(150);
-      expect(onNavigateScreen).toHaveBeenCalledWith("reader");
-
-      // Advance through TTS poll cycles and the 350ms restart cooldown
-      await advanceAndFlush(500);
-      await advanceAndFlush(500);
-
-      // Listening must be restarted automatically!
-      expect(startListeningCallCount).toBe(2);
-      expect(globalVoiceService.getState().isActive).toBe(true);
-      expect(globalVoiceService.getState().isPaused).toBe(false);
-      expect(globalVoiceService.getState().isListening).toBe(true);
+      // Because handsFreeMode is true, it re-enters LISTENING after speech completes
+      expect(listenCount).toBe(2);
+      expect(globalVoiceService.getState().sessionState).toBe("LISTENING");
     });
+  });
 
-    it("State subscriptions: broadcast accurate state on every transition without false paused events", async () => {
-      const history: Array<{ isActive: boolean; isPaused: boolean; isListening: boolean }> = [];
-      const unsubscribe = globalVoiceService.subscribe((s) => {
-        history.push({ isActive: s.isActive, isPaused: s.isPaused, isListening: s.isListening });
-      });
+  describe("Subscriptions and Clean Up", () => {
+    it("notifies listeners on state transitions and unsubscribes cleanly", () => {
+      const listener = jest.fn();
+      const unsubscribe = globalVoiceService.subscribe(listener);
 
-      jest.spyOn(voiceRecognitionService, "startListening").mockImplementation(async (cbs) => {
-        cbs?.onStart?.();
-      });
-
-      // 1. Enable
-      await globalVoiceService.enableVoiceMode();
-      await advanceAndFlush(400);
-
-      // 2. Pause explicitly
-      await globalVoiceService.pauseListening(false);
-
-      // 3. Resume
-      await globalVoiceService.resumeListening(false);
-      await advanceAndFlush(400);
-
-      // 4. Disable
-      await globalVoiceService.disableVoiceMode(false);
+      expect(listener).toHaveBeenCalledWith(
+        expect.objectContaining({ sessionState: "IDLE", statusMessage: "Ready" })
+      );
 
       unsubscribe();
+      globalVoiceService.pauseListening();
 
-      // Check the pause state transitions
-      const pausedEntries = history.filter((h) => h.isPaused);
-      expect(pausedEntries.length).toBeGreaterThan(0);
-      // Verify that every paused entry has isActive = true
-      pausedEntries.forEach((entry) => {
-        expect(entry.isActive).toBe(true);
-      });
-
-      // Prior to the explicit pause, no entry should have isPaused = true
-      const firstPauseIndex = history.findIndex((h) => h.isPaused);
-      for (let i = 0; i < firstPauseIndex; i++) {
-        expect(history[i].isPaused).toBe(false);
-      }
-    });
-
-    it("Pause -> confirmation speech completes -> remains paused (never triggers automatic resume)", async () => {
-      let completePauseSpeech: (() => void) | null = null;
-      jest.spyOn(speechService, "speak").mockImplementation(async (text, opts) => {
-        completePauseSpeech = () => opts?.onDone?.();
-      });
-
-      const listenSpy = jest.spyOn(voiceRecognitionService, "startListening");
-
-      // 1. Enable and reach listening
-      await globalVoiceService.enableVoiceMode();
-      if (completePauseSpeech) (completePauseSpeech as any)();
-      await advanceAndFlush(400);
-      expect(listenSpy).toHaveBeenCalledTimes(1);
-
-      // 2. Pause with confirmation speech
-      await globalVoiceService.pauseListening(true);
-      expect(globalVoiceService.getState().isPaused).toBe(true);
-      expect(globalVoiceService.getState().isSpeaking).toBe(true);
-      expect(globalVoiceService.getState().isListening).toBe(false);
-
-      // 3. Complete pause confirmation speech
-      expect(completePauseSpeech).toBeTruthy();
-      (completePauseSpeech as any)();
-      await advanceAndFlush(50);
-      expect(globalVoiceService.getState().isSpeaking).toBe(false);
-      expect(globalVoiceService.getState().isPaused).toBe(true);
-
-      // 4. Advance several seconds into the future
-      await advanceAndFlush(5000);
-
-      // Must strictly remain paused and NOT restart listening!
-      expect(listenSpy).toHaveBeenCalledTimes(1);
-      expect(globalVoiceService.getState().isPaused).toBe(true);
-      expect(globalVoiceService.getState().isListening).toBe(false);
-    });
-
-    it("Paused -> tap Resume -> confirmation speech -> native start -> listening", async () => {
-      let completeResumeSpeech: (() => void) | null = null;
-      jest.spyOn(speechService, "speak").mockImplementation(async (text, opts) => {
-        completeResumeSpeech = () => opts?.onDone?.();
-      });
-
-      let capturedCallbacks: any = null;
-      const listenSpy = jest.spyOn(voiceRecognitionService, "startListening").mockImplementation(async (cbs) => {
-        capturedCallbacks = cbs;
-      });
-
-      // 1. Reach paused state
-      await globalVoiceService.enableVoiceMode();
-      if (completeResumeSpeech) (completeResumeSpeech as any)();
-      await advanceAndFlush(400);
-
-      await globalVoiceService.pauseListening(false);
-      expect(globalVoiceService.getState().isPaused).toBe(true);
-
-      // 2. Tap Resume
-      const resumePromise = globalVoiceService.resumeListening(true);
-      await advanceAndFlush(50);
-
-      // During resume confirmation: unpaused, speaking, NOT listening yet
-      expect(globalVoiceService.getState().isPaused).toBe(false);
-      expect(globalVoiceService.getState().isSpeaking).toBe(true);
-      expect(globalVoiceService.getState().isListening).toBe(false);
-
-      // 3. Complete speech
-      expect(completeResumeSpeech).toBeTruthy();
-      (completeResumeSpeech as any)();
-      await resumePromise;
-
-      // 4. Advance past schedule delay (150ms)
-      await advanceAndFlush(200);
-      expect(listenSpy).toHaveBeenCalled();
-
-      // UI state before native onStart is still isListening=false
-      expect(globalVoiceService.getState().isListening).toBe(false);
-
-      // 5. Native onStart confirms
-      expect(capturedCallbacks).toBeTruthy();
-      capturedCallbacks.onStart();
-
-      // UI state confirms listening
-      expect(globalVoiceService.getState().isListening).toBe(true);
-      expect(globalVoiceService.getState().isSpeaking).toBe(false);
-      expect(globalVoiceService.getState().statusMessage).toBe("Listening resumed.");
-    });
-
-    it("TTS finishing while paused does not restart recognition", async () => {
-      let speechDoneCallback: (() => void) | null = null;
-      jest.spyOn(speechService, "speak").mockImplementation(async (text, opts) => {
-        speechDoneCallback = () => opts?.onDone?.();
-      });
-
-      let startCount = 0;
-      jest.spyOn(voiceRecognitionService, "startListening").mockImplementation(async (cbs) => {
-        startCount++;
-        cbs?.onStart?.();
-      });
-
-      // 1. Start active and listening
-      await globalVoiceService.enableVoiceMode();
-      if (speechDoneCallback) (speechDoneCallback as any)();
-      await advanceAndFlush(400);
-      expect(startCount).toBe(1);
-
-      // 2. User pauses while background speech might be queued
-      await globalVoiceService.pauseListening(false);
-      expect(globalVoiceService.getState().isPaused).toBe(true);
-
-      // 3. Speech completes while paused
-      if (speechDoneCallback) (speechDoneCallback as any)();
-      await advanceAndFlush(2000);
-
-      // Recognition must NOT restart
-      expect(startCount).toBe(1);
-      expect(globalVoiceService.getState().isPaused).toBe(true);
-      expect(globalVoiceService.getState().isListening).toBe(false);
-    });
-
-    it("Exit while speaking never restarts recognition", async () => {
-      let speechDoneCallback: (() => void) | null = null;
-      jest.spyOn(speechService, "speak").mockImplementation(async (text, opts) => {
-        speechDoneCallback = () => opts?.onDone?.();
-      });
-
-      let startCount = 0;
-      jest.spyOn(voiceRecognitionService, "startListening").mockImplementation(async (cbs) => {
-        startCount++;
-        cbs?.onStart?.();
-      });
-
-      // 1. Start active
-      await globalVoiceService.enableVoiceMode();
-      if (speechDoneCallback) (speechDoneCallback as any)();
-      await advanceAndFlush(400);
-      expect(startCount).toBe(1);
-
-      // 2. User exits voice mode while speech confirmation is speaking
-      await globalVoiceService.disableVoiceMode(true);
-      expect(globalVoiceService.getState().isActive).toBe(false);
-
-      // 3. Speech completes
-      if (speechDoneCallback) (speechDoneCallback as any)();
-      await advanceAndFlush(3000);
-
-      // Recognition must remain completely off
-      expect(startCount).toBe(1);
-      expect(globalVoiceService.getState().isActive).toBe(false);
-      expect(globalVoiceService.getState().isListening).toBe(false);
+      // No calls after unsubscribe
+      expect(listener).toHaveBeenCalledTimes(1);
     });
   });
 });

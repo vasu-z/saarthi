@@ -61,17 +61,13 @@ export function SaarthiApp() {
     });
   }, []);
 
-  // Play spoken welcome and show dismissible banner on first launch
+  // Show dismissible onboarding banner on first launch without speaking automatically
   useEffect(() => {
     (async () => {
       try {
         const played = await AsyncStorage.getItem(ONBOARDING_KEY);
         if (!played) {
           setShowOnboarding(true);
-          const welcome =
-            "Welcome to SAARTHI! Tap the purple Voice Assistant tile at the bottom right to activate voice control. Then speak naturally to navigate the app.";
-          await speechService.speak(welcome, { force: true });
-          await AsyncStorage.setItem(ONBOARDING_KEY, "true");
         }
       } catch {
         // Safe ignore

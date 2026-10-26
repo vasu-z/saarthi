@@ -57,6 +57,10 @@ export const VoiceAssistantScreen: React.FC<VoiceAssistantScreenProps> = ({
     if (!avail.available && avail.reason) {
       setNativeUnavailableReason(avail.reason);
     }
+    return () => {
+      voiceRecognitionService.stopListening();
+      speechService.stop();
+    };
   }, []);
 
   // Execute a recognized voice command using the active screen context
@@ -128,8 +132,7 @@ export const VoiceAssistantScreen: React.FC<VoiceAssistantScreenProps> = ({
         },
         onError: (err) => {
           setIsListening(false);
-          setStatusMessage(`Speech error: ${err}`);
-          speechService.speak("I couldn't hear that clearly, please try again.", { force: true });
+          setStatusMessage("I couldn't hear that clearly. Tap to try again.");
         },
         onEnd: () => {
           setIsListening(false);

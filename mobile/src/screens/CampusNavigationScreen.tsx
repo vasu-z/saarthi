@@ -145,16 +145,9 @@ export const CampusNavigationScreen: React.FC<CampusNavigationScreenProps> = ({
       if (!perm.granted) {
         setIsLocationDenied(true);
         setLocationErrorMessage(perm.errorMessage || "Location permission denied.");
-        await speechService.speak(
-          "Location permission is required for campus map navigation. Please allow location access in phone Settings.",
-          { force: true }
-        );
       } else if (!perm.servicesEnabled) {
         setIsGpsDisabled(true);
         setLocationErrorMessage("Device GPS is turned off. Please turn on Location in Settings.");
-        await speechService.speak("Device location is turned off. Please enable GPS in phone Settings.", {
-          force: true,
-        });
       }
     })();
 

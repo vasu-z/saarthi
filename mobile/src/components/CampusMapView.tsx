@@ -27,8 +27,30 @@ try {
   MapLibreGL = null;
 }
 
-// OpenStreetMap public vector map style with clear OSM attribution
-export const OSM_DEMO_STYLE = "https://demotiles.maplibre.org/style.json";
+// OpenStreetMap production raster tile style configuration
+export const OSM_RASTER_STYLE = {
+  version: 8,
+  name: "OpenStreetMap Production Tiles",
+  sources: {
+    "osm-tiles": {
+      type: "raster",
+      tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
+      tileSize: 256,
+      attribution: "© OpenStreetMap contributors",
+      maxzoom: 19,
+    },
+  },
+  layers: [
+    {
+      id: "osm-tiles-layer",
+      type: "raster",
+      source: "osm-tiles",
+      minzoom: 0,
+      maxzoom: 19,
+    },
+  ],
+};
+export const OSM_STYLE_JSON = JSON.stringify(OSM_RASTER_STYLE);
 export const OSM_ATTRIBUTION = "© OpenStreetMap contributors";
 
 export interface CampusMapViewProps {
@@ -143,7 +165,7 @@ export const CampusMapView: React.FC<CampusMapViewProps> = ({
     <View style={styles.container} accessible={false}>
       <MapView
         style={styles.map}
-        styleURL={OSM_DEMO_STYLE}
+        styleURL={OSM_STYLE_JSON}
         logoEnabled={false}
         attributionEnabled={false}
         onDidFailLoadingMap={(err: any) => {

@@ -63,7 +63,9 @@
       ],
       "@maplibre/maplibre-react-native",
       "expo-mlkit-ocr",
-      "expo-status-bar"
+      "expo-status-bar",
+      "expo-audio",
+      "expo-asset"
     ],
     "extra": {
       "eas": {

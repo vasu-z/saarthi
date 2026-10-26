@@ -9,6 +9,8 @@ from app.schemas.ai import (
     AITestResponse,
     AIVisionRequest,
     AIVisionResponse,
+    AIQueryRequest,
+    AIQueryResponse,
     DEFAULT_VISION_PROMPT,
     MAX_DECODED_IMAGE_SIZE_BYTES,
     SUPPORTED_MIME_TYPES,
@@ -76,6 +78,51 @@ def test_ai_connectivity(request: AITestRequest = AITestRequest()) -> AITestResp
             model=settings.GEMINI_MODEL,
             prompt=request.prompt,
             response=response_text,
+        )
+    except GeminiServiceException as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail=exc.message,
+        )
+
+
+@router.post(
+    "/query",
+    response_model=AIQueryResponse,
+    summary="Answer natural language university or general questions",
+    description="Ask a general question to the configured Gemma/Gemini model.",
+)
+def answer_general_query(request: AIQueryRequest) -> AIQueryResponse:
+    """Answer a user question concisely for accessible voice output."""
+    settings = get_settings()
+
+    if not settings.is_gemini_configured:
+        if settings.ENABLE_AI_MOCK:
+            return AIQueryResponse(
+                status="mock_success",
+                model=f"mock-{settings.GEMINI_MODEL}",
+                question=request.question,
+                answer=f"[MOCK AI] You asked: '{request.question}'. The Chandigarh University assistant is ready.",
+                confidence=0.85,
+            )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="AI model is not configured. Please set GEMINI_API_KEY in backend/.env.",
+        )
+
+    try:
+        combined_prompt = f"{request.context}\n\nUser Question: {request.question}\nAnswer:"
+        response_text = generate_text(
+            prompt=combined_prompt,
+            api_key=settings.GEMINI_API_KEY,
+            model=settings.GEMINI_MODEL,
+        )
+        return AIQueryResponse(
+            status="success",
+            model=settings.GEMINI_MODEL,
+            question=request.question,
+            answer=response_text.strip(),
+            confidence=0.90,
         )
     except GeminiServiceException as exc:
         raise HTTPException(

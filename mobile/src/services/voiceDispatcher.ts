@@ -13,6 +13,8 @@ import {
 import type { AppScreen } from "../../App";
 import { speechService } from "./speech";
 import { readingPipeline, ReadingPipelineResult } from "./readingPipeline";
+import { askGeneralQuery } from "../api/client";
+import { searchCampusPois } from "../data/campusSurveyData";
 
 export interface VoiceCommandDispatchContext {
   currentScreen: AppScreen;
@@ -35,6 +37,10 @@ export interface VoiceCommandDispatchContext {
   onExitVoiceMode?: () => void;
 }
 
+export interface DispatchVoiceCommandOptions {
+  speak?: boolean;
+}
+
 /**
  * Dispatches a recognized or typed voice command using the actual active screen context.
  *
@@ -48,30 +54,37 @@ export interface VoiceCommandDispatchContext {
  */
 export async function dispatchVoiceCommand(
   input: string | ParsedVoiceCommand,
-  context: VoiceCommandDispatchContext
+  context: VoiceCommandDispatchContext,
+  options: DispatchVoiceCommandOptions = { speak: true }
 ): Promise<string> {
   const parsed = typeof input === "string" ? parseVoiceCommand(input) : input;
   const currentScreen = context.currentScreen || "home";
+
+  const speakIfEnabled = async (text: string) => {
+    if (options.speak !== false) {
+      await speechService.speak(text, { force: true });
+    }
+  };
 
   switch (parsed.intent) {
     case "stop_listening": {
       context.onStopListening?.();
       const msg = "Listening paused. Tap the voice button to resume.";
-      await speechService.speak(msg, { force: true });
+      await speakIfEnabled(msg);
       return msg;
     }
 
     case "resume_listening": {
       context.onResumeListening?.();
       const msg = "Listening resumed.";
-      await speechService.speak(msg, { force: true });
+      await speakIfEnabled(msg);
       return msg;
     }
 
     case "exit_voice_mode": {
       context.onExitVoiceMode?.();
       const msg = "Voice mode is off.";
-      await speechService.speak(msg, { force: true });
+      await speakIfEnabled(msg);
       return msg;
     }
 
@@ -84,7 +97,7 @@ export async function dispatchVoiceCommand(
       const ok = await speechService.repeatLast();
       if (!ok) {
         const msg = "Nothing to repeat yet.";
-        await speechService.speak(msg, { force: true });
+        await speakIfEnabled(msg);
         return msg;
       }
       return "Replaying last message.";
@@ -93,13 +106,13 @@ export async function dispatchVoiceCommand(
     case "scan_now": {
       if (context.isCapturing) {
         const msg = "A scan is already in progress. Please wait.";
-        await speechService.speak(msg, { force: true });
+        await speakIfEnabled(msg);
         return msg;
       }
 
       if (currentScreen !== "reader") {
         const spokenMsg = "Opening camera in Auto Read mode. Say 'scan now' when ready.";
-        await speechService.speak(spokenMsg, { force: true });
+        await speakIfEnabled(spokenMsg);
         if (context.onNavigateToReader) {
           context.onNavigateToReader("auto");
         } else if (context.onNavigateToScreen) {
@@ -113,7 +126,7 @@ export async function dispatchVoiceCommand(
         return "Scan initiated.";
       } else {
         const notReady = "Camera is not ready yet. Please wait a moment.";
-        await speechService.speak(notReady, { force: true });
+        await speakIfEnabled(notReady);
         return notReady;
       }
     }
@@ -131,12 +144,12 @@ export async function dispatchVoiceCommand(
       if (!sourceText) {
         const noTextMsg =
           "No text was detected in the latest scan. Say 'scan again' to try another scan.";
-        await speechService.speak(noTextMsg, { force: true });
+        await speakIfEnabled(noTextMsg);
         return noTextMsg;
       }
 
       const fullSpoken = `Full text: ${sourceText}`;
-      await speechService.speak(fullSpoken, { force: true });
+      await speakIfEnabled(fullSpoken);
       return fullSpoken;
     }
 
@@ -152,18 +165,18 @@ export async function dispatchVoiceCommand(
       if (!summary) {
         const noSummaryMsg =
           "No summary is available for this scan. Say 'scan again' to try another scan.";
-        await speechService.speak(noSummaryMsg, { force: true });
+        await speakIfEnabled(noSummaryMsg);
         return noSummaryMsg;
       }
 
       const summarySpoken = `Summary: ${summary}`;
-      await speechService.speak(summarySpoken, { force: true });
+      await speakIfEnabled(summarySpoken);
       return summarySpoken;
     }
 
     case "scan_again": {
       const msg = "Returning to camera. Say 'scan now' when ready.";
-      await speechService.speak(msg, { force: true });
+      await speakIfEnabled(msg);
 
       if (context.onScanAgain) {
         context.onScanAgain();
@@ -178,13 +191,13 @@ export async function dispatchVoiceCommand(
 
     case "where_am_i": {
       const response = describeWhereAmI(currentScreen);
-      await speechService.speak(response, { force: true });
+      await speakIfEnabled(response);
       return response;
     }
 
     case "what_can_i_do": {
       const response = describeWhatCanIDo(currentScreen);
-      await speechService.speak(response, { force: true });
+      await speakIfEnabled(response);
       return response;
     }
 
@@ -211,7 +224,7 @@ export async function dispatchVoiceCommand(
           return "Scan initiated.";
         }
         const alreadyMsg = `You are already on the ${targetEntry.screenName} screen.`;
-        await speechService.speak(alreadyMsg, { force: true });
+        await speakIfEnabled(alreadyMsg);
         return alreadyMsg;
       }
 
@@ -219,13 +232,13 @@ export async function dispatchVoiceCommand(
       if (targetScreen === "results" && context.hasReadingResult === false) {
         const noResultMsg =
           "No reading results available yet. Please scan a document or sign first.";
-        await speechService.speak(noResultMsg, { force: true });
+        await speakIfEnabled(noResultMsg);
         return noResultMsg;
       }
 
       // Spoken confirmation
       const spokenMsg = `Opening ${targetEntry.screenName}.`;
-      await speechService.speak(spokenMsg, { force: true });
+      await speakIfEnabled(spokenMsg);
 
       // Trigger navigation callback
       if (context.onNavigateToScreen) {
@@ -262,7 +275,7 @@ export async function dispatchVoiceCommand(
       ) {
         const spoken =
           "You are already on the Home screen. There is nowhere to go back.";
-        await speechService.speak(spoken, { force: true });
+        await speakIfEnabled(spoken);
         return spoken;
       }
 
@@ -283,7 +296,7 @@ export async function dispatchVoiceCommand(
       }
 
       const spoken = `Returning to ${destinationName}.`;
-      await speechService.speak(spoken, { force: true });
+      await speakIfEnabled(spoken);
       return spoken;
     }
 
@@ -303,7 +316,7 @@ export async function dispatchVoiceCommand(
           ? "notice"
           : "general text";
       const spoken = `Opening camera in ${modeName} reading mode.`;
-      await speechService.speak(spoken, { force: true });
+      await speakIfEnabled(spoken);
       const validMode: "auto" | "timetable" | "sign" | "notice" =
         mode === "timetable" || mode === "sign" || mode === "notice"
           ? mode
@@ -317,20 +330,46 @@ export async function dispatchVoiceCommand(
     }
 
     case "navigate_to": {
-      const dest = parsed.destinationQuery || "";
-      const spoken = `Searching campus routes to ${dest || "destination"}.`;
-      await speechService.speak(spoken, { force: true });
+      const dest = (parsed.destinationQuery || "").trim();
+      const matches = searchCampusPois(dest);
+
+      let spoken = "";
+      if (matches.length === 1) {
+        spoken = `Finding walking route to ${matches[0].name}.`;
+      } else if (matches.length > 1) {
+        spoken = `Found multiple campus locations. Did you mean ${matches[0].name} or ${matches[1].name}?`;
+      } else if (dest) {
+        spoken = `Searching campus map for ${dest}.`;
+      } else {
+        spoken = "Opening campus map. Select a verified destination to start navigation.";
+      }
+
+      await speakIfEnabled(spoken);
       if (context.onNavigateToNavigation) {
-        context.onNavigateToNavigation(dest);
+        context.onNavigateToNavigation(matches[0]?.name || dest);
       } else if (context.onNavigateToScreen) {
         context.onNavigateToScreen("navigation");
       }
       return spoken;
     }
 
+    case "general_query": {
+      try {
+        const queryRes = await askGeneralQuery(parsed.rawTranscript);
+        const ans = queryRes.answer || "I could not find an answer for that.";
+        await speakIfEnabled(ans);
+        return ans;
+      } catch {
+        const fallback =
+          "I could not connect to answer that question right now. You can ask for your next class, campus directions, or to scan text.";
+        await speakIfEnabled(fallback);
+        return fallback;
+      }
+    }
+
     case "what_is_ahead": {
       const desc = "Opening Live Camera Assist with Gemma 4 vision.";
-      await speechService.speak(desc, { force: true });
+      await speakIfEnabled(desc);
       if (context.onNavigateToAssist) {
         context.onNavigateToAssist();
       } else if (context.onNavigateToScreen) {
@@ -343,8 +382,9 @@ export async function dispatchVoiceCommand(
 
     case "unknown":
     default: {
-      const msg = `I did not recognize the command "${parsed.rawTranscript}". Try asking "Where am I?", "What can I do here?", "Go Home", or "Open Reader".`;
-      await speechService.speak(msg, { force: true });
+      const msg =
+        "I did not recognize the command. You can ask for your next class, directions to a campus building, to read text, or ask a question.";
+      await speakIfEnabled(msg);
       return msg;
     }
   }

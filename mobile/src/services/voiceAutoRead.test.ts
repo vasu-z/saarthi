@@ -59,6 +59,7 @@ describe("Voice-First Campus Mode Auto Read & Results Suite", () => {
       const speakSpy = jest.spyOn(speechService, "speak");
       jest.spyOn(voiceRecognitionService, "checkAvailability").mockReturnValue({ available: true });
       jest.spyOn(voiceRecognitionService, "requestPermissions").mockResolvedValue(true);
+      jest.spyOn(voiceRecognitionService, "startListening").mockImplementation(async () => {});
 
       const customWelcome =
         "Auto Read active. Point your camera steady at a document or sign about 1 to 2 feet away. Say 'scan now' or tap the screen to capture.";
@@ -255,6 +256,7 @@ describe("Voice-First Campus Mode Auto Read & Results Suite", () => {
 
     it("immediately silences speech output for 'stop'", async () => {
       const stopSpy = jest.spyOn(speechService, "stop");
+      stopSpy.mockClear();
 
       const result = await dispatchVoiceCommand("stop", {
         currentScreen: "results",

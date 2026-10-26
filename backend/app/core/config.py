@@ -31,10 +31,22 @@ class Settings(BaseSettings):
     VALHALLA_API_URL: str = "https://valhalla1.openstreetmap.de/route"
     VALHALLA_TIMEOUT_SECONDS: float = 12.0
 
+    # ElevenLabs Official Text-to-Speech API configuration
+    ELEVENLABS_API_KEY: Optional[str] = None
+    ELEVENLABS_VOICE_ID: str = "21m00Tcm4TlvDq8ikWAM"  # Default natural multilingual voice
+    ELEVENLABS_MODEL_ID: str = "eleven_multilingual_v2"
+    ELEVENLABS_API_URL: str = "https://api.elevenlabs.io/v1"
+    ELEVENLABS_TIMEOUT_SECONDS: float = 15.0
+
     @property
     def is_gemini_configured(self) -> bool:
         """Check if a non-empty Gemini API key is configured."""
         return bool(self.GEMINI_API_KEY and self.GEMINI_API_KEY.strip())
+
+    @property
+    def is_elevenlabs_configured(self) -> bool:
+        """Check if a non-empty ElevenLabs API key is configured."""
+        return bool(self.ELEVENLABS_API_KEY and self.ELEVENLABS_API_KEY.strip())
 
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod

@@ -28,6 +28,7 @@ export type VoiceIntentType =
   | "what_can_i_do"
   | "next_class"
   | "navigate_to"
+  | "general_query"
   | NavigationIntentType
   | "go_back"
   | "repeat"
@@ -125,6 +126,11 @@ export function parseVoiceCommand(transcript: string): ParsedVoiceCommand {
     cleaned === "shut up" ||
     cleaned === "hush" ||
     cleaned === "silence" ||
+    cleaned === "ruko" ||
+    cleaned === "band karo" ||
+    cleaned === "chup" ||
+    cleaned === "shant" ||
+    cleaned === "bas" ||
     cleaned.startsWith("stop speaking") ||
     cleaned.startsWith("stop reading") ||
     cleaned.startsWith("stop talking")
@@ -604,7 +610,9 @@ export function parseVoiceCommand(transcript: string): ParsedVoiceCommand {
     cleaned === "what is my next class" ||
     cleaned === "where is my next class" ||
     cleaned === "what class is next" ||
-    cleaned.includes("next class")
+    cleaned.includes("next class") ||
+    cleaned.includes("agli class") ||
+    cleaned.includes("class kab hai")
   ) {
     return { intent: "next_class", rawTranscript: transcript, confidence: 0.95 };
   }
@@ -618,6 +626,9 @@ export function parseVoiceCommand(transcript: string): ParsedVoiceCommand {
     /^where is (?:the )?(.+)$/,
     /^guide me to (?:the )?(.+)$/,
     /^find (?:the )?(.+)$/,
+    /^mujhe (.+) le chalo$/,
+    /^(.+) ka rasta batao$/,
+    /^chalo (.+)$/,
   ];
 
   for (const pattern of navPatterns) {
@@ -633,6 +644,22 @@ export function parseVoiceCommand(transcript: string): ParsedVoiceCommand {
         };
       }
     }
+  }
+
+  // 14. GENERAL CAMPUS QUESTION / AI QUERY intent
+  if (
+    cleaned === "ask a question" ||
+    cleaned.startsWith("ask ") ||
+    cleaned.startsWith("tell me about campus") ||
+    cleaned.startsWith("tell me about chandigarh university") ||
+    cleaned.includes("chandigarh university") ||
+    cleaned.includes("about the campus")
+  ) {
+    return {
+      intent: "general_query",
+      rawTranscript: transcript,
+      confidence: 0.85,
+    };
   }
 
   return {

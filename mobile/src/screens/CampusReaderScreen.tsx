@@ -137,53 +137,7 @@ export const CampusReaderScreen: React.FC<CampusReaderScreenProps> = ({
   readingModeRef.current = readingMode;
   const hasAnnouncedStartupRef = useRef<boolean>(false);
 
-  // 1. Voice-guided startup on mount
-  useEffect(() => {
-    if (hasAnnouncedStartupRef.current) return;
-    hasAnnouncedStartupRef.current = true;
-
-    (async () => {
-      const voiceState = globalVoiceService.getState();
-      const avail = voiceRecognitionService.checkAvailability();
-
-      // If speech recognition is not supported on this platform/device
-      if (!avail.available) {
-        const recoveryMsg =
-          "Auto Read active. Point your camera steady at text or a sign about 1 to 2 feet away. Voice recognition is unavailable. Tap anywhere on the screen to take a scan.";
-        await speechService.speak(recoveryMsg, { force: true });
-        return;
-      }
-
-      // If voice mode is already active and paused, DO NOT unpause!
-      if (voiceState.isActive && voiceState.isPaused) {
-        const pausedMsg =
-          "Auto Read active. Point your camera steady about 1 to 2 feet away. Voice listening is paused. Tap the voice button to resume listening, or tap the screen to take a scan.";
-        await speechService.speak(pausedMsg, { force: true });
-        return;
-      }
-
-      // If voice mode is active and listening
-      if (voiceState.isActive && !voiceState.isPaused) {
-        const guideMsg =
-          "Auto Read active. Point your camera steady at a document or sign about 1 to 2 feet away. Say 'scan now' or tap the screen to capture.";
-        await speechService.speak(guideMsg, { force: true });
-        return;
-      }
-
-      // Voice mode is not active: verify permissions and activate
-      const micGranted = await voiceRecognitionService.requestPermissions();
-      if (!micGranted) {
-        const micDeniedMsg =
-          "Auto Read active. Microphone permission was denied. Tap anywhere on the screen to scan, or allow microphone access in Settings to use voice commands.";
-        await speechService.speak(micDeniedMsg, { force: true });
-        return;
-      }
-
-      await globalVoiceService.enableVoiceMode(
-        "Auto Read active. Point your camera steady at a document or sign about 1 to 2 feet away. Say 'scan now' or tap the screen to capture."
-      );
-    })();
-  }, []);
+  // No unprompted speech on mount. User initiates action via touch or push-to-talk.
 
   // 2. Register real scan trigger for voice dispatcher
   useEffect(() => {

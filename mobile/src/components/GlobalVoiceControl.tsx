@@ -102,10 +102,11 @@ export const GlobalVoiceControl: React.FC<GlobalVoiceControlProps> = ({
   // 3. ACTIVE STATE (LISTENING, SPEAKING, PAUSED, OR RECOVERABLE RETRY) - Rendered across all screens
   const isPaused = voiceState.isPaused;
   const isListening = voiceState.isListening && !voiceState.isPaused;
+  const isProcessing = voiceState.isProcessing;
   const isSpeaking = voiceState.isSpeaking;
   const hasError = Boolean(voiceState.error);
 
-  let statusText = "Voice: ON";
+  let statusText = "Ready";
   let statusIcon: keyof typeof Ionicons.glyphMap = "mic-outline";
   let statusColor = "#38BDF8";
 
@@ -117,6 +118,10 @@ export const GlobalVoiceControl: React.FC<GlobalVoiceControlProps> = ({
     statusText = "Voice: PAUSED";
     statusIcon = "pause-circle";
     statusColor = "#F59E0B";
+  } else if (isProcessing) {
+    statusText = "Processing...";
+    statusIcon = "sync";
+    statusColor = "#A855F7";
   } else if (isListening) {
     statusText = "Listening...";
     statusIcon = "mic";
@@ -126,7 +131,7 @@ export const GlobalVoiceControl: React.FC<GlobalVoiceControlProps> = ({
     statusIcon = "volume-medium";
     statusColor = "#38BDF8";
   } else {
-    statusText = "Voice: ON";
+    statusText = "Ready";
     statusIcon = "mic-outline";
     statusColor = "#38BDF8";
   }
